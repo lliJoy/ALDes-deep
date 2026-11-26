@@ -1,0 +1,38 @@
+﻿ALDes Windows 环境验证记录
+日期：2026-11-22
+项目：E:\EC\ALDes-deep
+环境：aldes
+解释器：F:\anc\envs\aldes\python.exe
+Python：3.11.18
+计算设备：CPU（本机 AMD Radeon 780M，本次未配置 GPU 加速）
+
+已安装：项目 editable 安装及 test、plot extras，包括 PyTorch、AutoOptLib、PFLACCO、IOH、NumPy、SciPy、Pandas、Jupyter、Matplotlib、Seaborn。
+核心版本：torch 2.15.0；autooptlib 1.3.0；numpy 1.24.4；scipy 1.10.1；pandas 2.0.3；pflacco 1.2.2；ioh 0.3.18。
+
+验证结果：
+- pip check：No broken requirements found.
+- pytest -q：76 passed in 14.81s
+- 测试包含真实 PBO 评估、一次完整 PPO 更新和多进程评估。
+- train.py --help、run_paper_subset.py --help、已安装的 aldes-train --help：通过。
+- ruff check .：通过。
+- ruff format --check .：32 files already formatted。
+- 未修改项目源代码；未执行默认 100 轮完整训练或完整论文实验，尚未验证长时间训练结果。
+
+运行（Anaconda PowerShell Prompt）：
+conda activate aldes
+cd E:\EC\ALDes-deep
+python train.py --problems 1 --seeds 1
+
+重新测试：
+$env:ALDES_DEVICE='cpu'
+$env:ALDES_EVAL_WORKERS='2'
+$env:OMP_NUM_THREADS='2'
+$env:MKL_NUM_THREADS='2'
+python -m pytest -q
+
+绘图 notebook：
+jupyter lab draw
+
+从项目根目录重建（需先退出现有同名环境或使用其他名称）：
+conda env create -f environment.windows.yml
+依赖清单：requirements.windows.lock.txt（Windows / Python 3.11，含 -e .，需在项目根目录使用）。

@@ -1,0 +1,8 @@
+name: aldes
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.9,<3.12
+  - pip>=23
+  - pip:
+      - -e .[test]
