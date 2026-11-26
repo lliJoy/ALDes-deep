@@ -311,6 +311,18 @@ def build_parser():
         help="PPO entropy bonus coefficient (default: 0.01; use 0 to disable)",
     )
     parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=conf.init_lr,
+        help=f"initial PPO learning rate (default: {conf.init_lr:g})",
+    )
+    parser.add_argument(
+        "--normalize-advantages",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="standardize each sampled problem's batch advantages (default: enabled)",
+    )
+    parser.add_argument(
         "--evaluate-only",
         type=Path,
         help="load shared weights and frozen scaling; test only",
@@ -329,6 +341,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if not np.isfinite(args.entropy_coef) or args.entropy_coef < 0:
         parser.error("--entropy-coef must be finite and nonnegative.")
+    if not np.isfinite(args.learning_rate) or args.learning_rate <= 0:
+        parser.error("--learning-rate must be finite and positive.")
     if args.prediction_length is not None:
         args.min_structures = args.prediction_length
         args.max_structures = args.prediction_length
@@ -439,7 +453,7 @@ def main(argv=None):
             model.structure_library, model.architecture_config = library, config
             optimizer = torch.optim.Adam(
                 model.parameters(),
-                lr=conf.init_lr,
+                lr=args.learning_rate,
                 weight_decay=conf.weight_decay,
                 eps=conf.adam_eps,
             )
@@ -471,6 +485,8 @@ def main(argv=None):
             "ppo_epochs": args.ppo_epochs,
             "batch_size": args.batch_size,
             "entropy_coef": args.entropy_coef,
+            "learning_rate": args.learning_rate,
+            "normalize_advantages": args.normalize_advantages,
             "features": features.metadata(),
             "train_feature_seeds": train_feature_seeds,
             "training_raw_features": [
@@ -488,7 +504,7 @@ def main(argv=None):
                 "balanced shuffled cycles over training "
                 "(function, dimension, instance, feature_seed); one per epoch"
             ),
-            "cost": "mean(log1p(max(f-f_opt,0))) on sampled problem; baseline per problem configuration",
+            "cost": "mean(log1p(max(f-f_opt,0))) on sampled problem; baseline per optimization problem (ELA feature seeds share it)",
             "boundary_handling": "clip to [-5,5]",
         }
         if library is not None:
@@ -523,6 +539,8 @@ def main(argv=None):
             evaluator=objective,
             batch_provider=objective.batch,
             entropy_coef=args.entropy_coef,
+            normalize_advantage=args.normalize_advantages,
+            initial_lr=args.learning_rate,
         )
         checkpoint = output / f"bbob_joint_seed{seed}.pt"
         save_checkpoint(checkpoint, model, metadata)

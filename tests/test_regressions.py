@@ -189,6 +189,39 @@ def test_final_ppo_epoch_keeps_a_nonzero_learning_rate(monkeypatch):
     assert optimizer.param_groups[0]["lr"] == pytest.approx(training_script.init_lr / 2)
 
 
+def test_ppo_uses_optimizer_learning_rate_instead_of_global(monkeypatch):
+    torch.manual_seed(5)
+    model = _small_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=2e-3)
+    target, attention = _inputs()
+
+    monkeypatch.setattr(training_script, "logs", _MemoryLog())
+    monkeypatch.setattr(training_script, "EWC_", None)
+    monkeypatch.setattr(
+        training_script,
+        "get_performance",
+        lambda actions, _problem_id: (
+            np.arange(actions.shape[0], dtype=np.float32).tolist(),
+            [np.zeros(1)] * actions.shape[0],
+        ),
+    )
+    training_script.PPO(
+        model,
+        optimizer,
+        clip=1.0,
+        total_epoch=2,
+        ppo_epoch=1,
+        baseline=None,
+        clip_coef=0.2,
+        src=None,
+        trg=target,
+        att_src=attention,
+        problem_id=1,
+    )
+
+    assert optimizer.param_groups[0]["lr"] == pytest.approx(1e-3)
+
+
 def test_ppo_gradient_favors_the_lower_cost_algorithm(monkeypatch):
     class ToyPolicy(nn.Module):
         def __init__(self):
@@ -758,7 +791,11 @@ def test_continual_model_injects_film_context_and_uses_causal_mask(monkeypatch):
 
     def capture(decoder_input, trg_mask, context=None):
         observed.append(
-            (decoder_input.shape[1], trg_mask.detach().clone(), context.detach().clone())
+            (
+                decoder_input.shape[1],
+                trg_mask.detach().clone(),
+                context.detach().clone(),
+            )
         )
         return original(decoder_input, trg_mask, context=context)
 
@@ -1003,6 +1040,31 @@ def test_plot_log_parsers_preserve_signs_and_scientific_notation(tmp_path):
         encoding="utf-8",
     )
     assert read_data_for_transformer(transformer_log) == [[10.0, -120000.0, 0.035]]
+
+
+def test_bbob_plot_sampling_includes_feature_seed_dimension():
+    from plot_bbob_training import sampled_functions
+
+    metadata = {
+        "train_functions": [1, 3],
+        "protocol": {
+            "train_dimensions": [10],
+            "train_instances": [1, 2],
+        },
+        "train_feature_seeds": [0, 1, 2],
+        "seed": 1,
+    }
+    cases = [
+        (function_id, 10, instance, feature_seed)
+        for function_id in metadata["train_functions"]
+        for instance in metadata["protocol"]["train_instances"]
+        for feature_seed in metadata["train_feature_seeds"]
+    ]
+    rng = np.random.default_rng(np.random.SeedSequence([1, 731]))
+    order = rng.permutation(len(cases)).tolist()
+    expected = [cases[order.pop()][0] for _ in cases]
+
+    assert sampled_functions(metadata, len(cases)).tolist() == expected
 
 
 def test_plot_notebooks_compile_from_the_repository_root():

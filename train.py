@@ -145,6 +145,8 @@ def PPO(
     evaluator=None,
     batch_provider=None,
     entropy_coef=0.0,
+    normalize_advantage=False,
+    initial_lr=None,
 ):
     if total_epoch <= 0 or ppo_epoch <= 0:
         raise ValueError("total_epoch and ppo_epoch must be positive.")
@@ -154,6 +156,10 @@ def PPO(
         raise ValueError("PPO clip coefficient must be between zero and one.")
     if not np.isfinite(entropy_coef) or entropy_coef < 0:
         raise ValueError("Entropy coefficient must be finite and nonnegative.")
+    if initial_lr is None:
+        initial_lr = optimizer.param_groups[0]["lr"]
+    if not np.isfinite(initial_lr) or initial_lr <= 0:
+        raise ValueError("Initial learning rate must be finite and positive.")
     ewc_loss = None
     log_performances = []
     problem_baselines = {}
@@ -165,7 +171,7 @@ def PPO(
         # Keep the final update non-zero; i / (epochs - 1) wasted the entire
         # final paper-protocol epoch at a learning rate of exactly zero.
         progress = i / max(1, total_epoch)
-        learning_rate = init_lr * (1.0 - progress)
+        learning_rate = initial_lr * (1.0 - progress)
         for group in optimizer.param_groups:
             group["lr"] = learning_rate
         since = time.time()
@@ -199,18 +205,26 @@ def PPO(
         if batch_provider is not None:
             problem_baselines[problem_id] = baseline
 
+        advantage = cost - baseline
+        raw_advantage_std = advantage.std(unbiased=False)
+        if normalize_advantage and cost.numel() > 1:
+            advantage = (advantage - advantage.mean()) / raw_advantage_std.clamp_min(
+                1e-8
+            )
+        unique_fraction = torch.unique(action, dim=0).shape[0] / action.shape[0]
+
         # ppo update
         entropy = None
+        grad_norm = None
+        conditioning_grad_norm = None
         for _ in range(ppo_epoch):
             _, _, new_action_log_p = model(src, trg, att_src, action)
             new_action_log_p = torch.squeeze(new_action_log_p, 2)
             logratio = new_action_log_p.sum(1) - action_log_p.sum(1)
             ratio = logratio.exp()
 
-            pg_loss1 = (cost - baseline) * ratio
-            pg_loss2 = (cost - baseline) * torch.clamp(
-                ratio, 1 - clip_coef, 1 + clip_coef
-            )
+            pg_loss1 = advantage * ratio
+            pg_loss2 = advantage * torch.clamp(ratio, 1 - clip_coef, 1 + clip_coef)
             loss = torch.max(pg_loss1, pg_loss2).mean()
             if entropy_coef:
                 entropy = getattr(getattr(model, "decoder", None), "last_entropy", None)
@@ -235,8 +249,19 @@ def PPO(
             optimizer.zero_grad()
             loss.backward()
 
-            torch.nn.utils.clip_grad_norm_(
+            grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), clip, error_if_nonfinite=True
+            )
+            conditioning_grads = [
+                parameter.grad.detach().norm().square()
+                for name, parameter in model.named_parameters()
+                if parameter.grad is not None
+                and ("landscape_encoder" in name or "_film" in name)
+            ]
+            conditioning_grad_norm = (
+                torch.stack(conditioning_grads).sum().sqrt()
+                if conditioning_grads
+                else None
             )
             optimizer.step()
 
@@ -272,6 +297,18 @@ def PPO(
             baseline.item(),
             ", entropy :",
             None if entropy is None else entropy.item(),
+            ", cost_std :",
+            cost.std(unbiased=False).item(),
+            ", advantage_std :",
+            raw_advantage_std.item(),
+            ", unique_fraction :",
+            unique_fraction,
+            ", grad_norm :",
+            None if grad_norm is None else grad_norm.item(),
+            ", conditioning_grad_norm :",
+            None if conditioning_grad_norm is None else conditioning_grad_norm.item(),
+            ", lr :",
+            learning_rate,
             elapsed_message,
         )
         logs.write_log(
@@ -286,6 +323,20 @@ def PPO(
                 baseline.item(),
                 ", entropy :",
                 None if entropy is None else entropy.item(),
+                ", cost_std :",
+                cost.std(unbiased=False).item(),
+                ", advantage_std :",
+                raw_advantage_std.item(),
+                ", unique_fraction :",
+                unique_fraction,
+                ", grad_norm :",
+                None if grad_norm is None else grad_norm.item(),
+                ", conditioning_grad_norm :",
+                None
+                if conditioning_grad_norm is None
+                else conditioning_grad_norm.item(),
+                ", lr :",
+                learning_rate,
                 elapsed_message,
             ).__str__()
         )

@@ -42,15 +42,19 @@ def sampled_functions(metadata: dict, epochs: int) -> np.ndarray | None:
     protocol = metadata.get("protocol", {})
     dimensions = protocol.get("train_dimensions")
     instances = protocol.get("train_instances")
+    feature_seeds = metadata.get("train_feature_seeds")
+    if feature_seeds is None:
+        feature_seeds = (metadata.get("features", {}).get("seed", 0),)
     seed = metadata.get("seed")
     if not function_ids or not dimensions or not instances or seed is None:
         return None
 
     keys = [
-        (function_id, dimension, instance)
+        (function_id, dimension, instance, feature_seed)
         for function_id in function_ids
         for dimension in dimensions
         for instance in instances
+        for feature_seed in feature_seeds
     ]
     rng = np.random.default_rng(np.random.SeedSequence([seed, 731]))
     order = []

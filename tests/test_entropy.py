@@ -86,6 +86,11 @@ def test_ppo_entropy_flattens_policy_when_costs_are_equal(monkeypatch):
 def test_joint_entropy_cli_default_and_disable():
     assert build_parser().parse_args([]).entropy_coef == 0.01
     assert build_parser().parse_args(["--entropy-coef", "0"]).entropy_coef == 0
+    assert build_parser().parse_args([]).normalize_advantages is True
+    assert (
+        build_parser().parse_args(["--no-normalize-advantages"]).normalize_advantages
+        is False
+    )
     assert build_parser().parse_args([]).exclude_structures is None
     exact = build_parser().parse_args(["--prediction-length", "4"])
     assert exact.prediction_length == 4
