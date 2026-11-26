@@ -118,13 +118,17 @@ def model_config(library=None, max_structures=6):
         "n_layers": conf.n_layers,
         "drop_prob": conf.drop_prob,
         "condition_on_features": True,
+        "conditioning_mode": "film",
+        "feature_dim": 32,
+        "context_hidden_dim": 128,
     }
 
 
-def initialize_structure_policy(model, output_std=1e-3):
+def initialize_structure_policy(model, output_std=5e-4):
     """Initialize a trainable structure policy with near-uniform token logits."""
 
     model.apply(training.initialize_weights)
+    model.reset_conditioning_identity()
     with torch.no_grad():
         torch.nn.init.normal_(model.decoder.linear.weight, mean=0.0, std=output_std)
         if model.decoder.linear.bias is not None:
@@ -135,9 +139,9 @@ def save_checkpoint(path, model, metadata):
     temporary = path.with_suffix(".tmp")
     torch.save(
         {
-            "format": "aldes-bbob-structures-v4"
+            "format": "aldes-bbob-structures-film-v5"
             if hasattr(model, "structure_library")
-            else "aldes-bbob-pflacco-v3",
+            else "aldes-bbob-pflacco-film-v4",
             "model_config": getattr(model, "architecture_config", model_config()),
             "model_state_dict": {
                 k: v.detach().cpu() for k, v in model.state_dict().items()
@@ -154,12 +158,17 @@ def load_checkpoint(path):
     if payload.get("format") not in {
         "aldes-bbob-pflacco-v3",
         "aldes-bbob-structures-v4",
+        "aldes-bbob-pflacco-film-v4",
+        "aldes-bbob-structures-film-v5",
     }:
         raise ValueError(
             "Expected PFLACCO BBOB v3 weights; retrain weights made with older features."
         )
     library, grammar = None, None
-    if payload["format"] == "aldes-bbob-structures-v4":
+    if payload["format"] in {
+        "aldes-bbob-structures-v4",
+        "aldes-bbob-structures-film-v5",
+    }:
         library = StructureLibrary.from_metadata(
             payload["metadata"]["structure_library"]
         )
@@ -168,12 +177,16 @@ def load_checkpoint(path):
             payload["metadata"]["max_structures"],
             payload["metadata"].get("min_structures", 1),
         )
-    model = Transformer(
-        **payload["model_config"], device=conf.device, grammar=grammar
-    ).to(conf.device)
+    config = dict(payload["model_config"])
+    if payload["format"] in {
+        "aldes-bbob-pflacco-v3",
+        "aldes-bbob-structures-v4",
+    }:
+        config.setdefault("conditioning_mode", "prefix")
+    model = Transformer(**config, device=conf.device, grammar=grammar).to(conf.device)
     if library is not None:
         model.structure_library = library
-        model.architecture_config = payload["model_config"]
+        model.architecture_config = config
     model.load_state_dict(payload["model_state_dict"], strict=True)
     return model, payload["metadata"]
 

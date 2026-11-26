@@ -159,16 +159,23 @@ def test_continual_mode_requires_and_uses_problem_features():
     model = _model(continual=True)
     target, attention = _inputs()
     zeros = torch.zeros(4, 1, 32)
-    ones = torch.ones(4, 1, 32)
+    changed = zeros.clone()
+    changed[:, :, 0] = 1.0
 
     with pytest.raises(ValueError, match="requires problem features"):
         model(None, target, attention)
 
+    film = model.decoder.layers[0].attention_film.modulation
+    assert film.weight.count_nonzero() == 0
+    with torch.no_grad():
+        film.weight.normal_(std=0.01)
     model.eval()
     with torch.no_grad():
         actions, _, sampled_log_probability = model(zeros, target, attention)
         _, _, replay_log_probability = model(zeros, target, attention, action=actions)
-        _, _, changed_log_probability = model(ones, target, attention, action=actions)
+        _, _, changed_log_probability = model(
+            changed, target, attention, action=actions
+        )
 
     torch.testing.assert_close(
         sampled_log_probability, replay_log_probability, rtol=0, atol=1e-6

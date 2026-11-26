@@ -123,7 +123,8 @@ def test_decoder_replay_likelihood_with_repetition_and_variable_length(library):
     torch.testing.assert_close(returned, actions)
     assert logp[0, 2:].count_nonzero() == 0  # Padding EOS only; first EOS is a choice.
     (-logp.sum()).backward()
-    assert model.decoder.feature_projection.weight.grad.count_nonzero()
+    film = model.decoder.layers[0].attention_film.modulation
+    assert film.weight.grad.count_nonzero()
     generated, _, _ = model(src, target, attention)
     for row in generated:
         grammar.decode(row.detach().numpy())
@@ -167,9 +168,10 @@ def test_structure_training_saves_and_reloads_shared_weights(tmp_path, monkeypat
     updates = []
 
     def capture_update(model, *args, **kwargs):
-        before = model.decoder.feature_projection.weight.detach().clone()
+        film = model.decoder.layers[0].attention_film.modulation.weight
+        before = film.detach().clone()
         result = ppo(model, *args, **kwargs)
-        updates.append(not torch.equal(before, model.decoder.feature_projection.weight))
+        updates.append(not torch.equal(before, film))
         return result
 
     monkeypatch.setattr(joint.training, "PPO", capture_update)

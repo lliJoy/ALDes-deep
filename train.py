@@ -76,6 +76,7 @@ def get_model(mode=None):
         f"on {describe_device(device)}"
     )
     model.apply(initialize_weights)
+    model.reset_conditioning_identity()
     optimizer = Adam(
         params=model.parameters(),
         lr=init_lr,

@@ -26,6 +26,7 @@ class Decoder(nn.Module):
         drop_prob,
         device,
         condition_on_features=False,
+        conditioning_mode=None,
         grammar=None,
     ):
         super().__init__()
@@ -55,6 +56,15 @@ class Decoder(nn.Module):
             vocab_size=dec_voc_size,
             device=device,
         )
+        if not condition_on_features:
+            conditioning_mode = "none"
+        elif conditioning_mode is None:
+            conditioning_mode = "film"
+        if conditioning_mode not in {"none", "prefix", "film"}:
+            raise ValueError("conditioning_mode must be none, prefix, or film.")
+        if condition_on_features != (conditioning_mode != "none"):
+            raise ValueError("Feature conditioning flags are inconsistent.")
+        self.conditioning_mode = conditioning_mode
         self.layers = nn.ModuleList(
             [
                 DecoderLayer(
@@ -62,6 +72,7 @@ class Decoder(nn.Module):
                     ffn_hidden=ffn_hidden,
                     n_head=n_head,
                     drop_prob=drop_prob,
+                    context_dim=d_model if conditioning_mode == "film" else None,
                 )
                 for _ in range(n_layers)
             ]
@@ -70,7 +81,7 @@ class Decoder(nn.Module):
         self.max_len = max_len
         self.condition_on_features = condition_on_features
         self.feature_projection = (
-            nn.Linear(d_model, d_model) if condition_on_features else None
+            nn.Linear(d_model, d_model) if conditioning_mode == "prefix" else None
         )
         self.temp = 1.0
         self.last_entropy = None
@@ -133,7 +144,7 @@ class Decoder(nn.Module):
             if trg.shape[1] >= self.max_len:
                 raise RuntimeError("ALDes generation reached max_len before end.")
 
-            position_offset = 1 if self.condition_on_features else 0
+            position_offset = 1 if self.conditioning_mode == "prefix" else 0
             decoder_input = self.emb(trg, position_offset=position_offset)
             if self.condition_on_features:
                 if enc_src is None:
@@ -150,8 +161,9 @@ class Decoder(nn.Module):
                     feature = feature.expand(trg.shape[0], -1)
                 if feature.shape[0] != trg.shape[0]:
                     raise ValueError("Feature batch must match the target batch.")
-                feature_token = self.feature_projection(feature).unsqueeze(1)
-                decoder_input = torch.cat((feature_token, decoder_input), dim=1)
+                if self.conditioning_mode == "prefix":
+                    feature_token = self.feature_projection(feature).unsqueeze(1)
+                    decoder_input = torch.cat((feature_token, decoder_input), dim=1)
 
             sequence_length = decoder_input.shape[1]
             causal_mask = torch.tril(
@@ -163,7 +175,11 @@ class Decoder(nn.Module):
                 )
             )
             for layer in self.layers:
-                decoder_input = layer(decoder_input, trg_mask=causal_mask)
+                decoder_input = layer(
+                    decoder_input,
+                    trg_mask=causal_mask,
+                    context=feature if self.conditioning_mode == "film" else None,
+                )
             output = self.linear(decoder_input[:, -1:, :])
             mask = self.get_mask(trg).unsqueeze(1)
             output = output.masked_fill(~mask, -math.inf)

@@ -114,9 +114,8 @@ def test_conditioned_weights_update_and_reload_without_test_training(
     def get_model(mode):
         assert mode == "continual"
         model, optimizer = original(mode)
-        captured.append(
-            (model, model.decoder.feature_projection.weight.detach().clone())
-        )
+        film = model.decoder.layers[0].attention_film.modulation.weight
+        captured.append((model, film.detach().clone()))
         return model, optimizer
 
     monkeypatch.setattr(joint.training, "get_model", get_model)
@@ -149,7 +148,8 @@ def test_conditioned_weights_update_and_reload_without_test_training(
     )
     assert len(captured) == 1
     model, before = captured[0]
-    assert not torch.equal(before, model.decoder.feature_projection.weight)
+    film = model.decoder.layers[0].attention_film.modulation.weight
+    assert not torch.equal(before, film)
     summary = json.loads((tmp_path / "bbob_joint_seed1.json").read_text())
     train_ids, heldout_ids = joint.split_functions(0)
     assert summary["protocol"]["train_dimensions"] == [10]

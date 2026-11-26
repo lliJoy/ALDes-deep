@@ -749,16 +749,18 @@ def test_single_problem_trials_reset_seed_for_each_problem(monkeypatch):
     assert seeds == [7, 7]
 
 
-def test_continual_model_prepends_feature_token_and_uses_causal_mask(monkeypatch):
+def test_continual_model_injects_film_context_and_uses_causal_mask(monkeypatch):
     model = _small_model(continual=True)
     target, attention = _inputs()
     features = torch.zeros(2, 1, 32)
     observed = []
     original = model.decoder.layers[0].forward
 
-    def capture(decoder_input, trg_mask):
-        observed.append((decoder_input.shape[1], trg_mask.detach().clone()))
-        return original(decoder_input, trg_mask)
+    def capture(decoder_input, trg_mask, context=None):
+        observed.append(
+            (decoder_input.shape[1], trg_mask.detach().clone(), context.detach().clone())
+        )
+        return original(decoder_input, trg_mask, context=context)
 
     monkeypatch.setattr(model.decoder.layers[0], "forward", capture)
     model.eval()
@@ -766,9 +768,11 @@ def test_continual_model_prepends_feature_token_and_uses_causal_mask(monkeypatch
         actions, _, _ = model(features, target, attention, reference=True)
 
     validate_sequence(actions[0].tolist())
-    first_length, first_mask = observed[0]
-    assert first_length == 2  # feature token followed by begin token
+    first_length, first_mask, first_context = observed[0]
+    assert first_length == 1  # Only the begin token is in the AR sequence.
     assert torch.equal(first_mask, torch.tril(torch.ones_like(first_mask)))
+    assert first_context.shape == (2, 32)
+    assert all(entry[2].shape == (2, 32) for entry in observed)
 
 
 def test_model_validates_configuration_features_and_replay():
